@@ -89,6 +89,17 @@ button:disabled{opacity:.4;cursor:default}
   </section>
 
   <section>
+    <div class="eti">Studio dell'intorno <i id="st-et"></i></div>
+    <select id="tipo">
+      <option value="">Nessuno studio</option><option value="residenziale">Residenziale</option><option value="logistica">Logistica</option>
+      <option value="produttivo">Produttivo</option><option value="commerciale">Commerciale</option><option value="direzionale">Direzionale</option>
+      <option value="rigenerazione">Rigenerazione</option><option value="opere-pubbliche">Opere pubbliche</option>
+    </select>
+    <dl class="dati" id="st-dati"></dl>
+    <div class="nota">Servizi e infrastrutture vicini, da OpenStreetMap, con distanze in linea d'aria. Entrano da soli nei dati che copi per Claude.</div>
+  </section>
+
+  <section>
     <div class="eti">5 · Manda a Claude</div>
     <button class="primario" id="copia-dati" disabled>Copia dati e incollali in Claude</button>
     <button class="primario" id="copia-img" disabled>Copia inquadramento e incollalo in Claude</button>
@@ -206,6 +217,7 @@ function aggiorna() {
   $('d-ind').textContent = luogo.indirizzo || '—';
   $('d-com').textContent = luogo.comune ? luogo.comune + (luogo.provincia ? ` (${luogo.provincia})` : '') : '—';
   ['esporta', 'copia-dati', 'copia-img'].forEach(id => $(id).disabled = !c);
+  if (typeof avviaStudio === 'function') avviaStudio();
 }
 
 // ---------------------------------------------------------------- ricerca (Esri World Geocoder, riserva OpenStreetMap Nominatim)
@@ -346,14 +358,133 @@ function testoPerClaude(d) {
     `Area del lotto disegnato: ${d.area_lotto_mq_circa ? 'circa ' + fmt(d.area_lotto_mq_circa) + ' mq (indicativa)' : 'lotto non disegnato'}`,
     d.lotto ? `Vertici del lotto: ${d.lotto.map(p => p.join(',')).join(' ; ')}` : '',
     `Cerchi distanze: ${d.raggi_km.length ? d.raggi_km.join(' e ') + ' km' : 'nessuno'} · fondo ${d.fondo} · zoom ${d.zoom}`,
-    `Google Maps: ${d.link_google_maps}`, '', '```json', JSON.stringify(d), '```'].filter(x => x !== '').join('\n');
+    `Google Maps: ${d.link_google_maps}`, ...testoStudio(d.studio_intorno), '', '```json', JSON.stringify(d), '```'].filter((x, i, a) => x !== '' || (a[i + 1] || '').startsWith('STUDIO') || (a[i + 1] || '').startsWith('Studio')).join('\n');
+}
+// ---------------------------------------------------------------- studio dell'intorno (OpenStreetMap via Overpass)
+// per tipologia: [chiave, etichetta, filtro Overpass, raggio m]
+const VOCI = {
+  casello:   ['Caselli autostradali', 'nwr["highway"="motorway_junction"]', 25000],
+  viabilita: ['Strade principali', 'way["highway"~"^(motorway|trunk|primary)$"]', 3000],
+  stazione:  ['Stazioni ferroviarie', 'nwr["railway"~"^(station|halt)$"]["usage"!="industrial"]', 10000],
+  scalo:     ['Scali merci e interporti', 'nwr["railway"="yard"];nwr["landuse"="railway"]["name"~"[Ii]nterporto|[Ss]calo"]', 25000],
+  aeroporto: ['Aeroporti', 'nwr["aeroway"="aerodrome"]["iata"]', 60000],
+  bus:       ['Fermate bus e tram', 'node["highway"="bus_stop"];node["railway"="tram_stop"]', 800],
+  centro:    ['Centri abitati', 'node["place"~"^(city|town|village)$"]', 10000],
+  scuola:    ['Scuole', 'nwr["amenity"~"^(school|kindergarten)$"]', 2000],
+  universita:['Università', 'nwr["amenity"="university"]', 10000],
+  supermercato: ['Supermercati', 'nwr["shop"~"^(supermarket|convenience)$"]', 2000],
+  farmacia:  ['Farmacie', 'nwr["amenity"="pharmacy"]', 2000],
+  sanita:    ['Ospedali e medici', 'nwr["amenity"~"^(hospital|clinic|doctors)$"]', 5000],
+  verde:     ['Parchi e verde pubblico', 'nwr["leisure"~"^(park|garden|playground)$"]', 1500],
+  sport:     ['Impianti sportivi', 'nwr["leisure"~"^(sports_centre|pitch|stadium)$"]', 2000],
+  commercio: ['Centri commerciali e grandi superfici', 'nwr["shop"~"^(mall|department_store|supermarket|doityourself)$"]', 5000],
+  ristoro:   ['Bar e ristoranti', 'nwr["amenity"~"^(restaurant|cafe|bar|fast_food)$"]', 800],
+  hotel:     ['Hotel', 'nwr["tourism"="hotel"]', 3000],
+  parcheggio:['Parcheggi pubblici', 'nwr["amenity"="parking"]["access"!~"private|customers"]', 800],
+  municipio: ['Municipi', 'nwr["amenity"="townhall"]', 5000],
+  sicurezza: ['Polizia, carabinieri, vigili del fuoco', 'nwr["amenity"~"^(police|fire_station)$"]', 5000],
+  industria: ['Aree produttive', 'way["landuse"="industrial"]["name"]', 3000],
+};
+const STUDIO = {
+  residenziale: ['centro', 'scuola', 'supermercato', 'farmacia', 'sanita', 'verde', 'sport', 'bus', 'stazione'],
+  logistica: ['casello', 'viabilita', 'scalo', 'stazione', 'aeroporto', 'industria', 'centro'],
+  produttivo: ['casello', 'viabilita', 'industria', 'stazione', 'scalo', 'bus', 'centro', 'sicurezza'],
+  commerciale: ['casello', 'viabilita', 'commercio', 'centro', 'bus', 'stazione', 'parcheggio'],
+  direzionale: ['stazione', 'bus', 'casello', 'aeroporto', 'ristoro', 'hotel', 'parcheggio', 'centro'],
+  rigenerazione: ['centro', 'stazione', 'bus', 'scuola', 'supermercato', 'verde', 'sanita', 'viabilita'],
+  'opere-pubbliche': ['municipio', 'scuola', 'sanita', 'sicurezza', 'stazione', 'bus', 'viabilita', 'centro'],
+};
+const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
+let studio = null, studioPromessa = null, studioChiave = '', studioTimer = null;
+function distKm(a, b) {
+  const R = 6371, r = Math.PI / 180, dLa = (b.lat - a.lat) * r, dLo = (b.lng - a.lng) * r;
+  const h = Math.sin(dLa / 2) ** 2 + Math.cos(a.lat * r) * Math.cos(b.lat * r) * Math.sin(dLo / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+function nomeOsm(t) {
+  if (t.highway === 'motorway_junction') return [t.name, t.ref && 'uscita ' + t.ref].filter(Boolean).join(' · ') || 'svincolo';
+  if (/^(motorway|trunk|primary)$/.test(t.highway)) return [t.ref, t.name].filter(Boolean).join(' ') || t.highway;
+  return t.name || t.brand || t.operator || '';
+}
+async function studiaIntorno(c, tipo) {
+  const chiavi = STUDIO[tipo] || [];
+  const q = '[out:json][timeout:40];(' + chiavi.map(k => VOCI[k][1].split(';').map(f => `${f}(around:${VOCI[k][2]},${c.lat},${c.lng});`).join('')).join('') + ');out center tags 2000;';
+  let js = null, err = null;
+  for (const u of OVERPASS) {
+    try { const r = await fetch(u, { method: 'POST', body: 'data=' + encodeURIComponent(q), headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }); if (r.ok) { js = await r.json(); break; } err = 'HTTP ' + r.status; }
+    catch (e) { err = e.message; }
+  }
+  if (!js) throw new Error(err || 'servizio non raggiungibile');
+  const el = js.elements.map(e => ({ t: e.tags || {}, p: { lat: e.lat ?? e.center?.lat, lng: e.lon ?? e.center?.lon } })).filter(e => e.p.lat != null);
+  const prova = (k, t) => VOCI[k][1].split(';').some(f => [...f.matchAll(/\["([^"]+)"(=|~|!=|!~)"([^"]*)"\]/g)].every(([, ch, op, v]) => {
+    const x = t[ch]; if (op === '=') return x === v; if (op === '!=') return x !== v; const re = new RegExp(v); return op === '~' ? x != null && re.test(x) : !(x != null && re.test(x));
+  }));
+  const out = {};
+  for (const k of chiavi) {
+    const visti = new Set();
+    const v = el.filter(e => prova(k, e.t)).map(e => ({ nome: nomeOsm(e.t), km: distKm(c, e.p), t: e.t }))
+      .filter(e => e.km * 1000 <= VOCI[k][2]).sort((a, b) => a.km - b.km)
+      .filter(e => { const n = e.nome || '#' + e.km.toFixed(2); if (visti.has(n)) return false; visti.add(n); return true; });
+    out[k] = { voce: VOCI[k][0], entro_km: VOCI[k][2] / 1000, quanti: v.length,
+      piu_vicini: v.slice(0, 3).map(e => ({ nome: e.nome || '(senza nome)', km: +e.km.toFixed(2), ...(e.t.place ? { tipo: e.t.place, abitanti: e.t.population } : {}) })) };
+  }
+  return { tipologia: tipo, fonte: 'OpenStreetMap (Overpass), distanze in linea d\'aria dal punto del progetto', voci: out };
+}
+const fkm = km => km < 1 ? Math.round(km * 1000 / 10) * 10 + ' m' : km.toFixed(1).replace('.', ',') + ' km';
+function mostraStudio() {
+  const d = $('st-dati'); d.innerHTML = '';
+  if (!studio) return;
+  for (const k in studio.voci) {
+    const v = studio.voci[k], p = v.piu_vicini[0];
+    const dt = document.createElement('dt'); dt.textContent = v.voce;
+    const dd = document.createElement('dd'); dd.textContent = p ? `${fkm(p.km)}${p.nome && p.nome !== '(senza nome)' ? ' · ' + p.nome : ''}` : `nessuno entro ${v.entro_km} km`;
+    if (p) dd.title = `${v.quanti} entro ${v.entro_km} km`;
+    d.append(dt, dd);
+  }
+}
+function avviaStudio() {
+  clearTimeout(studioTimer);
+  const c = centro(), tipo = $('tipo').value;
+  if (!c || !tipo) { studio = null; studioPromessa = null; studioChiave = ''; $('st-et').textContent = ''; mostraStudio(); return; }
+  const chiave = `${tipo}|${c.lat.toFixed(5)}|${c.lng.toFixed(5)}`;
+  if (chiave === studioChiave) return;
+  studioTimer = setTimeout(() => {
+    studioChiave = chiave; studio = null; mostraStudio(); $('st-et').textContent = 'in corso…';
+    studioPromessa = studiaIntorno(c, tipo).then(r => { if (studioChiave === chiave) { studio = r; $('st-et').textContent = ''; mostraStudio(); } return r; })
+      .catch(e => { if (studioChiave === chiave) { $('st-et').textContent = 'non riuscito'; studioChiave = ''; } return { tipologia: tipo, errore: 'studio non riuscito: ' + e.message }; });
+  }, 900);
+}
+$('tipo').onchange = () => { studioChiave = ''; avviaStudio(); };
+async function datiCompleti() {
+  const d = raccogli(), c = centro(), tipo = $('tipo').value;
+  if (!tipo) return d;
+  const chiave = `${tipo}|${c.lat.toFixed(5)}|${c.lng.toFixed(5)}`;
+  clearTimeout(studioTimer);
+  if (studioChiave !== chiave || !studioPromessa) {   // studio non ancora partito per questo punto: lo avvio subito
+    studioChiave = chiave; studio = null; $('st-et').textContent = 'in corso…';
+    studioPromessa = studiaIntorno(c, tipo).then(r => { if (studioChiave === chiave) { studio = r; $('st-et').textContent = ''; mostraStudio(); } return r; })
+      .catch(e => { if (studioChiave === chiave) { $('st-et').textContent = 'non riuscito'; studioChiave = ''; } return { tipologia: tipo, errore: 'studio non riuscito: ' + e.message }; });
+  }
+  d.studio_intorno = await studioPromessa;
+  return d;
+}
+function testoStudio(s) {
+  if (!s) return [];
+  if (s.errore) return ['', `Studio dell'intorno (${s.tipologia}): ${s.errore}`];
+  return ['', `STUDIO DELL'INTORNO · ${s.tipologia} · ${s.fonte}`, ...Object.values(s.voci).map(v => `- ${v.voce}: ${v.piu_vicini.length ? v.piu_vicini.map(p => `${p.nome} ${fkm(p.km)}`).join('; ') + ` (${v.quanti} entro ${v.entro_km} km)` : 'nessuno entro ' + v.entro_km + ' km'}`)];
 }
 function avviso(t) { $('stato').textContent = t; }
 $('copia-dati').onclick = async () => {
   if (!centro()) return;
-  const t = testoPerClaude(raccogli());
-  try { await navigator.clipboard.writeText(t); avviso('Dati copiati: incollali nella chat con Claude (Ctrl+V).'); }
+  if ($('tipo').value && !studio) avviso('Completo lo studio dell\'intorno…');
+  const tp = datiCompleti().then(testoPerClaude);
+  try {
+    if (window.ClipboardItem) await navigator.clipboard.write([new ClipboardItem({ 'text/plain': tp.then(t => new Blob([t], { type: 'text/plain' })) })]);
+    else await navigator.clipboard.writeText(await tp);
+    avviso('Dati copiati: incollali nella chat con Claude (Ctrl+V).');
+  }
   catch (e) {
+    const t = await tp;
     const ta = document.createElement('textarea'); ta.value = t; document.body.appendChild(ta); ta.select();
     try { document.execCommand('copy'); avviso('Dati copiati: incollali nella chat con Claude (Ctrl+V).'); } catch (e2) { avviso('Copia non riuscita: usa "Oppure scarica i due file".'); }
     ta.remove();
@@ -373,7 +504,7 @@ $('esporta').onclick = async () => {
   if (!centro()) return;
   avviso('Preparo l\'inquadramento…'); $('esporta').disabled = true;
   try {
-    const d = raccogli();
+    const d = await datiCompleti();
     scarica(new Blob([JSON.stringify(d, null, 2)], { type: 'application/json' }), `DOMUS_luogo_${slug()}.json`);
     scarica(await inquadramento(), d.immagine);
     avviso('Fatto: trascina i due file scaricati nella chat con Claude.');
@@ -388,6 +519,7 @@ aggiorna();
   if (h.get('luogo')) PARTENZA.luogo = h.get('luogo');
   if (h.get('nome')) PARTENZA.nome = h.get('nome');
   if (PARTENZA.nome) $('nome').value = PARTENZA.nome;
+  if (h.get('tipo') && STUDIO[h.get('tipo')]) $('tipo').value = h.get('tipo');
   if (!PARTENZA.luogo) return;
   $('cerca').value = PARTENZA.luogo;
   try {
