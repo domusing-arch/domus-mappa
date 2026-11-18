@@ -474,21 +474,27 @@ function testoStudio(s) {
   return ['', `STUDIO DELL'INTORNO · ${s.tipologia} · ${s.fonte}`, ...Object.values(s.voci).map(v => `- ${v.voce}: ${v.piu_vicini.length ? v.piu_vicini.map(p => `${p.nome} ${fkm(p.km)}`).join('; ') + ` (${v.quanti} entro ${v.entro_km} km)` : 'nessuno entro ' + v.entro_km + ' km'}`)];
 }
 function avviso(t) { $('stato').textContent = t; }
+function copiaTesto(t) {
+  // copia sincrona dentro il clic (funziona in tutti i browser), poi conferma con l'API moderna se c'è
+  const ta = document.createElement('textarea'); ta.value = t; ta.setAttribute('readonly', '');
+  ta.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0';
+  document.body.appendChild(ta); ta.focus(); ta.select(); ta.setSelectionRange(0, t.length);
+  let ok = false; try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+  ta.remove();
+  if (ok) return Promise.resolve(true);
+  return navigator.clipboard && navigator.clipboard.writeText ? navigator.clipboard.writeText(t).then(() => true, () => false) : Promise.resolve(false);
+}
 $('copia-dati').onclick = async () => {
   if (!centro()) return;
-  if ($('tipo').value && !studio) avviso('Completo lo studio dell\'intorno…');
-  const tp = datiCompleti().then(testoPerClaude);
-  try {
-    if (window.ClipboardItem) await navigator.clipboard.write([new ClipboardItem({ 'text/plain': tp.then(t => new Blob([t], { type: 'text/plain' })) })]);
-    else await navigator.clipboard.writeText(await tp);
-    avviso('Dati copiati: incollali nella chat con Claude (Ctrl+V).');
-  }
-  catch (e) {
-    const t = await tp;
-    const ta = document.createElement('textarea'); ta.value = t; document.body.appendChild(ta); ta.select();
-    try { document.execCommand('copy'); avviso('Dati copiati: incollali nella chat con Claude (Ctrl+V).'); } catch (e2) { avviso('Copia non riuscita: usa "Oppure scarica i due file".'); }
-    ta.remove();
-  }
+  const d = raccogli();
+  const inCorso = $('tipo').value && !studio;
+  if (studio) d.studio_intorno = studio;
+  const ok = await copiaTesto(testoPerClaude(d));
+  if (!ok) { avviso('Copia non riuscita: usa "Oppure scarica i due file".'); return; }
+  if (inCorso) {
+    avviso('Dati copiati senza lo studio dell\'intorno, ancora in corso: aspetta qualche secondo e ripremi.');
+    datiCompleti().then(x => avviso(x.studio_intorno && !x.studio_intorno.errore ? 'Studio dell\'intorno pronto: premi di nuovo "Copia dati".' : 'Studio dell\'intorno non riuscito: Claude farà le ricerche sul web. I dati copiati vanno bene.'));
+  } else avviso('Dati copiati: incollali nella chat con Claude (Ctrl+V).');
 };
 $('copia-img').onclick = async () => {
   if (!centro()) return;
