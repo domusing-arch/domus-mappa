@@ -1,0 +1,391 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DOMUS · Luogo del progetto</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500&family=Inter+Tight:wght@200;300;400&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+/* Strumento DOMUS: si apre nel browser (doppio clic sul file), si sceglie il luogo e si esportano dati e inquadramento per la brochure A3. */
+:root{--bianco:#fff;--carta:#F5F3EF;--ink:#15161A;--tenue:#6C6860;--linea:#E2DED6;--arancio:#FF8000;--arancio-t:#C25F00;--nero:#111214;
+  --titoli:'Inter Tight',Inter,Arial,sans-serif;--testo:Inter,Arial,sans-serif;--mono:'JetBrains Mono',Consolas,monospace}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{font:400 14px/1.5 var(--testo);color:var(--ink);background:var(--carta);display:grid;grid-template-columns:360px 1fr}
+aside{background:var(--bianco);border-right:1px solid var(--linea);display:flex;flex-direction:column;min-height:0;overflow:auto}
+.testa{padding:18px 22px 14px;border-bottom:1px solid var(--linea);display:flex;align-items:baseline;gap:10px}
+.logo{font:300 22px/1 var(--titoli);letter-spacing:.02em}.logo b{color:var(--arancio);font-weight:300}
+.testa span{font:400 10px var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--tenue)}
+section{padding:16px 22px;border-bottom:1px solid var(--linea);display:flex;flex-direction:column;gap:10px}
+.eti{font:400 10px var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--tenue);display:flex;align-items:center;gap:8px}
+.eti:before{content:'';width:14px;height:1.5px;background:var(--arancio)}
+.eti i{font-style:normal;color:var(--arancio-t)}
+input[type=text],select{width:100%;font:400 14px var(--testo);padding:9px 11px;border:1px solid var(--linea);border-radius:2px;background:var(--bianco);color:var(--ink)}
+input:focus,select:focus,button:focus-visible{outline:2px solid var(--arancio);outline-offset:1px}
+.riga{display:flex;gap:8px}.riga>*{flex:1;min-width:0}
+button{font:400 11px var(--mono);letter-spacing:.1em;text-transform:uppercase;padding:10px 12px;border:1px solid var(--ink);background:var(--bianco);color:var(--ink);border-radius:2px;cursor:pointer}
+button:hover{background:var(--carta)}
+button.on{background:var(--ink);color:#fff}
+button.primario{background:var(--arancio);border-color:var(--arancio);color:#fff}
+button.primario:hover{background:#e67300}
+button:disabled{opacity:.4;cursor:default}
+#risultati{list-style:none;margin:0;padding:0;max-height:180px;overflow:auto}
+#risultati li{padding:7px 2px;border-bottom:1px solid var(--linea);cursor:pointer;font-size:13px}
+#risultati li:hover{color:var(--arancio-t)}
+.dati{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-size:13px}
+.dati dt{font:400 10px/20px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--tenue)}
+.dati dd{margin:0;text-align:right;font-variant-numeric:tabular-nums}
+.nota{font-size:12px;color:var(--tenue)}
+.stato{font:400 11px var(--mono);color:var(--arancio-t);min-height:16px}
+#mappa{height:100%;min-height:0}
+.leaflet-container{background:var(--carta);font-family:var(--testo)}
+.cerchio-et{font:500 10px var(--mono);letter-spacing:.12em;color:var(--tenue);background:none;border:none;white-space:nowrap}
+@media (max-width:760px){body{grid-template-columns:1fr;grid-template-rows:auto 60vh}aside{order:1}}
+</style>
+</head>
+<body>
+<aside>
+  <div class="testa"><div class="logo"><b>D</b>OMUS</div><span>Luogo del progetto</span></div>
+
+  <section>
+    <div class="eti">1 · Progetto</div>
+    <input type="text" id="nome" placeholder="Nome del progetto (per i file)">
+  </section>
+
+  <section>
+    <div class="eti">2 · Cerca l'indirizzo</div>
+    <div class="riga"><input type="text" id="cerca" placeholder="Via, comune…"><button id="vai" style="flex:0 0 auto">Cerca</button></div>
+    <ul id="risultati"></ul>
+    <div class="nota">Oppure naviga la mappa: trascina per spostarti, rotella per lo zoom.</div>
+  </section>
+
+  <section>
+    <div class="eti">3 · Indica il lotto</div>
+    <div class="riga"><button id="m-punto" class="on">Punto</button><button id="m-lotto">Disegna lotto</button></div>
+    <div class="nota" id="aiuto">Clicca sulla mappa per mettere il punto del progetto.</div>
+    <div class="riga"><button id="chiudi" disabled>Chiudi lotto</button><button id="cancella">Cancella</button></div>
+  </section>
+
+  <section>
+    <div class="eti">4 · Inquadramento</div>
+    <div class="riga">
+      <select id="fondo"><option value="chiara">Mappa stradale</option><option value="topo">Mappa topografica</option><option value="sat">Satellite</option></select>
+      <select id="raggi"><option value="0.4,0.8">Cerchi 5 e 10 min a piedi</option><option value="1,3">Cerchi 1 e 3 km</option><option value="5,10">Cerchi 5 e 10 km</option><option value="">Nessun cerchio</option></select>
+    </div>
+    <div class="nota">L'inquadramento esportato è quello che vedi, in formato 4:3, in bianco e nero con il lotto in arancio come nella brochure.</div>
+  </section>
+
+  <section>
+    <div class="eti">Dati <i id="area-et"></i></div>
+    <dl class="dati">
+      <dt>Coordinate</dt><dd id="d-coord">—</dd>
+      <dt>Indirizzo</dt><dd id="d-ind">—</dd>
+      <dt>Comune</dt><dd id="d-com">—</dd>
+      <dt>Area lotto</dt><dd id="d-area">—</dd>
+    </dl>
+  </section>
+
+  <section>
+    <div class="eti">5 · Manda a Claude</div>
+    <button class="primario" id="copia-dati" disabled>Copia dati e incollali in Claude</button>
+    <button class="primario" id="copia-img" disabled>Copia inquadramento e incollalo in Claude</button>
+    <div class="nota">Copia uno alla volta e incolla nella chat con Claude (Ctrl+V): prima i dati, poi l'immagine.</div>
+    <button id="esporta" disabled>Oppure scarica i due file</button>
+    <div class="stato" id="stato"></div>
+  </section>
+</aside>
+<div id="mappa"></div>
+
+<script>
+// Località di partenza: la scrive Claude quando prepara il file per un progetto (crea_mappa.py)
+const PARTENZA = { luogo: '', nome: '' };
+const AR = '#FF8000';
+const ESRI = 'https://server.arcgisonline.com/ArcGIS/rest/services/';
+const FONDI = {
+  chiara: { url: ESRI + 'World_Street_Map/MapServer/tile/{z}/{y}/{x}', max: 19, attr: 'Esri, HERE, Garmin, © OpenStreetMap contributors' },
+  topo:   { url: ESRI + 'World_Topo_Map/MapServer/tile/{z}/{y}/{x}', max: 19, attr: 'Esri, HERE, Garmin, © OpenStreetMap contributors' },
+  sat:    { url: ESRI + 'World_Imagery/MapServer/tile/{z}/{y}/{x}', max: 19, attr: 'Esri, Maxar, Earthstar Geographics' },
+};
+const $ = id => document.getElementById(id);
+const map = L.map('mappa', { zoomControl: true }).setView([45.6672, 9.7416], 13);   // Seriate
+let fondo = null;
+function setFondo(k) {
+  if (fondo) map.removeLayer(fondo);
+  const f = FONDI[k];
+  fondo = L.tileLayer(f.url, { maxZoom: f.max, maxNativeZoom: f.max, attribution: f.attr, crossOrigin: true }).addTo(map);
+  let errori = 0;
+  fondo.on('tileerror', () => { if (++errori === 6) $('stato').textContent = 'La mappa non si carica: prova un altro fondo o controlla la connessione.'; });
+  fondo.on('tileload', () => { if (errori < 6) $('stato').textContent = ''; });
+  fondo.getContainer && (fondo.getContainer().style.filter = 'grayscale(1)');
+}
+setFondo('chiara');
+$('fondo').onchange = e => setFondo(e.target.value);
+
+// ---------------------------------------------------------------- stato del luogo
+let modo = 'punto', punto = null, vertici = [], lotto = null, traccia = null, chiuso = false;
+const cerchi = L.layerGroup().addTo(map);
+let luogo = { indirizzo: '', comune: '', provincia: '', regione: '' };
+const pallino = latlng => L.circleMarker(latlng, { radius: 7, color: '#fff', weight: 2, fillColor: AR, fillOpacity: 1 });
+
+function setModo(m) {
+  modo = m; $('m-punto').classList.toggle('on', m === 'punto'); $('m-lotto').classList.toggle('on', m === 'lotto');
+  $('aiuto').textContent = m === 'punto' ? 'Clicca sulla mappa per mettere il punto del progetto.' : 'Clicca i vertici del lotto uno dopo l\'altro, poi "Chiudi lotto".';
+  map.getContainer().style.cursor = 'crosshair';
+}
+$('m-punto').onclick = () => setModo('punto');
+$('m-lotto').onclick = () => { setModo('lotto'); if (chiuso) cancellaLotto(); };
+setModo('punto');
+
+function cancellaLotto() { vertici = []; chiuso = false; if (lotto) map.removeLayer(lotto); if (traccia) map.removeLayer(traccia); lotto = traccia = null; $('chiudi').disabled = true; }
+$('cancella').onclick = () => { cancellaLotto(); if (punto) map.removeLayer(punto); punto = null; aggiorna(); };
+
+map.on('click', e => {
+  if (modo === 'punto') { if (punto) map.removeLayer(punto); punto = pallino(e.latlng).addTo(map); geocodificaInversa(e.latlng); }
+  else {
+    if (chiuso) cancellaLotto();
+    vertici.push(e.latlng);
+    if (traccia) map.removeLayer(traccia);
+    traccia = L.polyline(vertici, { color: AR, weight: 2, dashArray: '4 4' }).addTo(map);
+    $('chiudi').disabled = vertici.length < 3;
+    if (!punto) geocodificaInversa(e.latlng);
+  }
+  aggiorna();
+});
+$('chiudi').onclick = () => {
+  if (vertici.length < 3) return;
+  if (traccia) map.removeLayer(traccia); traccia = null;
+  lotto = L.polygon(vertici, { color: AR, weight: 2.5, fillColor: AR, fillOpacity: .12 }).addTo(map);
+  chiuso = true; $('chiudi').disabled = true;
+  if (!punto) { const c = centro(); geocodificaInversa(c); }
+  aggiorna();
+};
+$('raggi').onchange = () => aggiorna();
+map.on('zoomend moveend', () => {});
+
+function centro() {
+  if (punto) return punto.getLatLng();
+  if (vertici.length) { const b = L.latLngBounds(vertici); return b.getCenter(); }
+  return null;
+}
+function raggi() { return $('raggi').value ? $('raggi').value.split(',').map(Number) : []; }
+
+// area geodetica del poligono (mq), proiezione locale equirettangolare: errore trascurabile per un lotto
+function areaMq(pts) {
+  if (pts.length < 3) return 0;
+  const R = 6378137, lat0 = pts.reduce((a, p) => a + p.lat, 0) / pts.length * Math.PI / 180;
+  const xy = pts.map(p => [R * p.lng * Math.PI / 180 * Math.cos(lat0), R * p.lat * Math.PI / 180]);
+  let a = 0; for (let i = 0; i < xy.length; i++) { const [x1, y1] = xy[i], [x2, y2] = xy[(i + 1) % xy.length]; a += x1 * y2 - x2 * y1; }
+  return Math.abs(a) / 2;
+}
+function dms(v, pos, neg) {
+  const s = v >= 0 ? pos : neg; v = Math.abs(v);
+  const g = Math.floor(v), m = Math.floor((v - g) * 60), sec = ((v - g) * 60 - m) * 60;
+  return `${g}°${String(m).padStart(2, '0')}′${sec.toFixed(2).padStart(5, '0')}″${s}`;
+}
+const fmt = n => String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+
+function aggiorna() {
+  cerchi.clearLayers();
+  const c = centro();
+  if (c) raggi().forEach((km, i) => {
+    L.circle(c, { radius: km * 1000, color: '#6C6860', weight: 1, dashArray: '3 5', fill: false, interactive: false }).addTo(cerchi);
+    const lab = $('raggi').value === '0.4,0.8' ? ['5 MIN', '10 MIN'][i] : (km < 1 ? km * 1000 + ' M' : km + ' KM');
+    const p = L.latLng(c.lat + km / 111.32, c.lng);
+    L.marker(p, { icon: L.divIcon({ className: 'cerchio-et', html: lab, iconSize: [60, 14], iconAnchor: [30, 16] }), interactive: false }).addTo(cerchi);
+  });
+  $('d-coord').textContent = c ? `${dms(c.lat, 'N', 'S')} ${dms(c.lng, 'E', 'W')}` : '—';
+  const a = chiuso ? areaMq(vertici) : 0;
+  $('d-area').textContent = a ? fmt(a) + ' mq circa' : '—';
+  $('d-ind').textContent = luogo.indirizzo || '—';
+  $('d-com').textContent = luogo.comune ? luogo.comune + (luogo.provincia ? ` (${luogo.provincia})` : '') : '—';
+  ['esporta', 'copia-dati', 'copia-img'].forEach(id => $(id).disabled = !c);
+}
+
+// ---------------------------------------------------------------- ricerca (Esri World Geocoder, riserva OpenStreetMap Nominatim)
+const GEO = 'https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/';
+const zoomPer = t => /PointAddress|Subaddress|StreetAddress|POI|StreetName|StreetInt|house|building|road/i.test(t) ? 17 : /Neighborhood|District|suburb|quarter|hamlet|village/i.test(t) ? 16 : 15;
+async function trova(q, n) {
+  try {
+    const r = await fetch(`${GEO}findAddressCandidates?f=json&countryCode=ITA&langCode=IT&maxLocations=${n}&outFields=Addr_type,Match_addr&SingleLine=${encodeURIComponent(q)}`);
+    const js = await r.json();
+    if (js.candidates && js.candidates.length) return js.candidates.map(c => ({ nome: c.address, lat: c.location.y, lng: c.location.x, z: zoomPer(c.attributes.Addr_type || '') }));
+  } catch (e) {}
+  const r = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=${n}&countrycodes=it&accept-language=it&q=${encodeURIComponent(q)}`);
+  return (await r.json()).map(x => ({ nome: x.display_name, lat: +x.lat, lng: +x.lon, z: zoomPer(x.addresstype || x.type || '') }));
+}
+async function cerca() {
+  const q = $('cerca').value.trim(); if (!q) return;
+  $('risultati').innerHTML = '<li>Cerco…</li>';
+  try {
+    const js = await trova(q, 6);
+    $('risultati').innerHTML = '';
+    if (!js.length) { $('risultati').innerHTML = '<li>Nessun risultato: prova con via e comune.</li>'; return; }
+    js.forEach(x => {
+      const li = document.createElement('li'); li.textContent = x.nome;
+      li.onclick = () => { map.setView([x.lat, x.lng], x.z); $('risultati').innerHTML = ''; };
+      $('risultati').appendChild(li);
+    });
+  } catch (e) { $('risultati').innerHTML = '<li>Ricerca non disponibile: naviga la mappa a mano.</li>'; }
+}
+$('vai').onclick = cerca;
+$('cerca').addEventListener('keydown', e => { if (e.key === 'Enter') cerca(); });
+
+const SIGLE = {"Agrigento":"AG","Alessandria":"AL","Ancona":"AN","Aosta":"AO","Valle d'Aosta":"AO","Arezzo":"AR","Ascoli Piceno":"AP","Asti":"AT","Avellino":"AV","Bari":"BA","Barletta-Andria-Trani":"BT","Belluno":"BL","Benevento":"BN","Bergamo":"BG","Biella":"BI","Bologna":"BO","Bolzano":"BZ","Bolzano - Bozen":"BZ","Brescia":"BS","Brindisi":"BR","Cagliari":"CA","Caltanissetta":"CL","Campobasso":"CB","Caserta":"CE","Catania":"CT","Catanzaro":"CZ","Chieti":"CH","Como":"CO","Cosenza":"CS","Cremona":"CR","Crotone":"KR","Cuneo":"CN","Enna":"EN","Fermo":"FM","Ferrara":"FE","Firenze":"FI","Foggia":"FG","Forlì-Cesena":"FC","Frosinone":"FR","Genova":"GE","Gorizia":"GO","Grosseto":"GR","Imperia":"IM","Isernia":"IS","La Spezia":"SP","L'Aquila":"AQ","Latina":"LT","Lecce":"LE","Lecco":"LC","Livorno":"LI","Lodi":"LO","Lucca":"LU","Macerata":"MC","Mantova":"MN","Massa-Carrara":"MS","Matera":"MT","Messina":"ME","Milano":"MI","Modena":"MO","Monza e della Brianza":"MB","Monza e Brianza":"MB","Napoli":"NA","Novara":"NO","Nuoro":"NU","Oristano":"OR","Padova":"PD","Palermo":"PA","Parma":"PR","Pavia":"PV","Perugia":"PG","Pesaro e Urbino":"PU","Pescara":"PE","Piacenza":"PC","Pisa":"PI","Pistoia":"PT","Pordenone":"PN","Potenza":"PZ","Prato":"PO","Ragusa":"RG","Ravenna":"RA","Reggio Calabria":"RC","Reggio Emilia":"RE","Reggio nell'Emilia":"RE","Rieti":"RI","Rimini":"RN","Roma":"RM","Rovigo":"RO","Salerno":"SA","Sassari":"SS","Savona":"SV","Siena":"SI","Siracusa":"SR","Sondrio":"SO","Sud Sardegna":"SU","Taranto":"TA","Teramo":"TE","Terni":"TR","Torino":"TO","Trapani":"TP","Trento":"TN","Treviso":"TV","Trieste":"TS","Udine":"UD","Varese":"VA","Venezia":"VE","Verbano-Cusio-Ossola":"VB","Vercelli":"VC","Verona":"VR","Vibo Valentia":"VV","Vicenza":"VI","Viterbo":"VT"};
+const sigla = p => { p = (p || '').replace(/^(Provincia|Città metropolitana|Citta metropolitana|Libero consorzio comunale) di /i, '').trim(); return SIGLE[p] || p; };
+async function geocodificaInversa(ll) {
+  try {
+    const r = await fetch(`${GEO}reverseGeocode?f=json&langCode=IT&location=${ll.lng},${ll.lat}`);
+    const a = (await r.json()).address;
+    if (!a) throw 0;
+    luogo = { indirizzo: a.Address || '', comune: a.City || a.District || '', provincia: sigla(a.Subregion), regione: a.Region || '' };
+  } catch (e) {
+    try {
+      const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=18&addressdetails=1&accept-language=it&lat=${ll.lat}&lon=${ll.lng}`);
+      const a = (await r.json()).address || {};
+      luogo = { indirizzo: [a.road, a.house_number].filter(Boolean).join(' '), comune: a.city || a.town || a.village || a.municipality || '',
+                provincia: (a['ISO3166-2-lvl6'] || '').split('-')[1] || sigla(a.county || a.province), regione: a.state || '' };
+    } catch (e2) { luogo = { indirizzo: '', comune: '', provincia: '', regione: '' }; }
+  }
+  aggiorna();
+}
+
+// ---------------------------------------------------------------- esportazione
+const tile = (f, z, x, y) => L.Util.template(f.url, { z, x, y });
+const carica = src => new Promise((ok, ko) => { const i = new Image(); i.crossOrigin = 'anonymous'; i.onload = () => ok(i); i.onerror = () => ko(src); i.src = src; });
+
+async function inquadramento() {
+  const W = 2400, H = 1800, f = FONDI[$('fondo').value];
+  const box = map.getSize(), zv = map.getZoom();
+  // zoom di esportazione: copre la stessa area visibile, con il doppio della definizione quando possibile
+  let z = Math.min(f.max, Math.round(zv + Math.log2(W / Math.max(box.x, box.y * 4 / 3))));
+  const cpt = map.project(map.getCenter(), z), tl = cpt.subtract([W / 2, H / 2]);
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H; const g = cv.getContext('2d');
+  g.fillStyle = '#F0EDE7'; g.fillRect(0, 0, W, H);
+  const n = 2 ** z, jobs = [];
+  for (let x = Math.floor(tl.x / 256); x <= Math.floor((tl.x + W) / 256); x++)
+    for (let y = Math.floor(tl.y / 256); y <= Math.floor((tl.y + H) / 256); y++) {
+      if (y < 0 || y >= n) continue;
+      const xx = ((x % n) + n) % n;
+      jobs.push(carica(tile(f, z, xx, y)).then(img => ({ img, x, y })).catch(() => null));
+    }
+  const tiles = await Promise.all(jobs);
+  if (tiles.some(t => !t)) throw new Error('alcune parti della mappa non si sono caricate');
+  g.filter = $('fondo').value === 'sat' ? 'grayscale(1) contrast(.85) brightness(1.15)' : 'grayscale(1) contrast(.95)';
+  tiles.forEach(t => g.drawImage(t.img, t.x * 256 - tl.x, t.y * 256 - tl.y, 256, 256));
+  g.filter = 'none';
+  g.fillStyle = 'rgba(240,237,231,.28)'; g.fillRect(0, 0, W, H);           // velatura "tavola"
+  const P = ll => { const p = map.project(ll, z).subtract(tl); return [p.x, p.y]; };
+  const c = centro(), mpp = 156543.03392 * Math.cos(c.lat * Math.PI / 180) / n;
+  // cerchi delle distanze
+  g.setLineDash([10, 14]); g.lineWidth = 2.5; g.strokeStyle = '#6C6860';
+  const [cx, cy] = P(c);
+  g.font = '500 26px "JetBrains Mono", Consolas, monospace'; g.textAlign = 'center';
+  raggi().forEach((km, i) => {
+    const r = km * 1000 / mpp; g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.stroke();
+    const lab = $('raggi').value === '0.4,0.8' ? ['5 MIN', '10 MIN'][i] : (km < 1 ? km * 1000 + ' M' : km + ' KM');
+    g.fillStyle = '#F0EDE7'; const w = g.measureText(lab).width + 20; g.fillRect(cx - w / 2, cy - r - 18, w, 34);
+    g.fillStyle = '#6C6860'; g.fillText(lab, cx, cy - r + 8);
+  });
+  g.setLineDash([]);
+  // lotto
+  if (chiuso) {
+    g.beginPath(); vertici.forEach((v, i) => { const [x, y] = P(v); i ? g.lineTo(x, y) : g.moveTo(x, y); }); g.closePath();
+    g.fillStyle = 'rgba(255,128,0,.16)'; g.fill(); g.lineWidth = 5; g.strokeStyle = AR; g.stroke();
+  }
+  g.beginPath(); g.arc(cx, cy, 13, 0, Math.PI * 2); g.fillStyle = AR; g.fill(); g.lineWidth = 4; g.strokeStyle = '#fff'; g.stroke();
+  const nome = ($('nome').value || 'Progetto').toUpperCase();
+  g.font = '500 30px "JetBrains Mono", Consolas, monospace'; g.textAlign = 'left';
+  const tw = g.measureText(nome).width; g.fillStyle = 'rgba(255,255,255,.9)'; g.fillRect(cx + 26, cy - 24, tw + 24, 46);
+  g.fillStyle = '#C25F00'; g.fillText(nome, cx + 38, cy + 9);
+  // nord e scala grafica
+  g.fillStyle = '#15161A'; g.beginPath(); g.moveTo(W - 80, 60); g.lineTo(W - 96, 112); g.lineTo(W - 80, 100); g.lineTo(W - 64, 112); g.closePath(); g.fill();
+  g.font = '500 24px "JetBrains Mono", Consolas, monospace'; g.textAlign = 'center'; g.fillText('N', W - 80, 145);
+  const passi = [50, 100, 200, 250, 500, 1000, 2000, 5000, 10000], m = passi.find(s => s / mpp > 220) || 10000, sl = m / mpp;
+  g.fillRect(60, H - 70, sl, 6); g.fillStyle = AR; g.fillRect(60, H - 70, sl / 2, 6);
+  g.fillStyle = '#15161A'; g.textAlign = 'left'; g.fillText(m >= 1000 ? m / 1000 + ' km' : m + ' m', 60, H - 84);
+  g.font = '400 18px "JetBrains Mono", Consolas, monospace'; g.textAlign = 'right'; g.fillStyle = '#6C6860'; g.fillText(f.attr, W - 40, H - 40);
+  return new Promise(ok => cv.toBlob(ok, 'image/png'));
+}
+
+function scarica(blob, nome) {
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = nome;
+  document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
+}
+const slug = () => ($('nome').value || 'progetto').trim().replace(/[^\w\- ]/g, '').replace(/\s+/g, '_') || 'progetto';
+function raccogli() {
+  const c = centro();
+  return {
+    progetto: $('nome').value || '', lat: +c.lat.toFixed(6), lng: +c.lng.toFixed(6), coordinate: `${dms(c.lat, 'N', 'S')} ${dms(c.lng, 'E', 'W')}`,
+    indirizzo: luogo.indirizzo, comune: luogo.comune, provincia: luogo.provincia, regione: luogo.regione,
+    luogo_brochure: [luogo.indirizzo, luogo.comune && `${luogo.comune}${luogo.provincia ? ` (${luogo.provincia})` : ''}`].filter(Boolean).join(' · '),
+    lotto: chiuso ? vertici.map(v => [+v.lat.toFixed(6), +v.lng.toFixed(6)]) : null, area_lotto_mq_circa: chiuso ? Math.round(areaMq(vertici)) : null,
+    raggi_km: raggi(), fondo: $('fondo').value, zoom: map.getZoom(), link_google_maps: `https://www.google.com/maps?q=${c.lat.toFixed(6)},${c.lng.toFixed(6)}`,
+    immagine: `DOMUS_inquadramento_${slug()}.png`, creato: new Date().toISOString(),
+  };
+}
+function testoPerClaude(d) {
+  return ['DOMUS · LUOGO DEL PROGETTO (dalla mappa DOMUS)',
+    `Progetto: ${d.progetto || '—'}`,
+    `Luogo per la brochure: ${d.luogo_brochure || '—'}`,
+    `Coordinate: ${d.coordinate}`,
+    `Lat, lng: ${d.lat}, ${d.lng}`,
+    `Comune: ${d.comune || '—'}${d.provincia ? ` (${d.provincia})` : ''}${d.regione ? ` · ${d.regione}` : ''}`,
+    `Area del lotto disegnato: ${d.area_lotto_mq_circa ? 'circa ' + fmt(d.area_lotto_mq_circa) + ' mq (indicativa)' : 'lotto non disegnato'}`,
+    d.lotto ? `Vertici del lotto: ${d.lotto.map(p => p.join(',')).join(' ; ')}` : '',
+    `Cerchi distanze: ${d.raggi_km.length ? d.raggi_km.join(' e ') + ' km' : 'nessuno'} · fondo ${d.fondo} · zoom ${d.zoom}`,
+    `Google Maps: ${d.link_google_maps}`, '', '```json', JSON.stringify(d), '```'].filter(x => x !== '').join('\n');
+}
+function avviso(t) { $('stato').textContent = t; }
+$('copia-dati').onclick = async () => {
+  if (!centro()) return;
+  const t = testoPerClaude(raccogli());
+  try { await navigator.clipboard.writeText(t); avviso('Dati copiati: incollali nella chat con Claude (Ctrl+V).'); }
+  catch (e) {
+    const ta = document.createElement('textarea'); ta.value = t; document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); avviso('Dati copiati: incollali nella chat con Claude (Ctrl+V).'); } catch (e2) { avviso('Copia non riuscita: usa "Oppure scarica i due file".'); }
+    ta.remove();
+  }
+};
+$('copia-img').onclick = async () => {
+  if (!centro()) return;
+  avviso('Preparo l\'inquadramento…'); $('copia-img').disabled = true;
+  try {
+    // la promessa va passata subito a ClipboardItem: così la copia resta legata al clic anche se l'immagine richiede qualche secondo
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': inquadramento() })]);
+    avviso('Inquadramento copiato: incollalo nella chat con Claude (Ctrl+V).');
+  } catch (e) { avviso('Copia dell\'immagine non riuscita (' + (e.message || e) + '): usa "Oppure scarica i due file".'); }
+  $('copia-img').disabled = false;
+};
+$('esporta').onclick = async () => {
+  if (!centro()) return;
+  avviso('Preparo l\'inquadramento…'); $('esporta').disabled = true;
+  try {
+    const d = raccogli();
+    scarica(new Blob([JSON.stringify(d, null, 2)], { type: 'application/json' }), `DOMUS_luogo_${slug()}.json`);
+    scarica(await inquadramento(), d.immagine);
+    avviso('Fatto: trascina i due file scaricati nella chat con Claude.');
+  } catch (e) { avviso('Errore: ' + e.message + '. Riprova o cambia fondo.'); }
+  $('esporta').disabled = false;
+};
+aggiorna();
+// apertura: zoom sulla località indicata, poi l'utente affina e segna il lotto
+(async () => {
+  // pagina pubblicata sul web: la località arriva nel link, es. …/mappa.html#luogo=Via%20Pastrengo%201%2C%20Seriate&nome=Sede
+  const h = new URLSearchParams(location.hash.slice(1));
+  if (h.get('luogo')) PARTENZA.luogo = h.get('luogo');
+  if (h.get('nome')) PARTENZA.nome = h.get('nome');
+  if (PARTENZA.nome) $('nome').value = PARTENZA.nome;
+  if (!PARTENZA.luogo) return;
+  $('cerca').value = PARTENZA.luogo;
+  try {
+    const x = (await trova(PARTENZA.luogo, 1))[0];
+    if (!x) { $('risultati').innerHTML = '<li>Località non trovata: cercala qui sopra.</li>'; return; }
+    map.setView([x.lat, x.lng], x.z);
+  } catch (e) { $('risultati').innerHTML = '<li>Ricerca non disponibile: naviga la mappa a mano.</li>'; }
+})();
+</script>
+</body>
+</html>
