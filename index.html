@@ -110,7 +110,7 @@ const FONDI = {
   sat:    { url: ESRI + 'World_Imagery/MapServer/tile/{z}/{y}/{x}', max: 19, attr: 'Esri, Maxar, Earthstar Geographics' },
 };
 const $ = id => document.getElementById(id);
-const map = L.map('mappa', { zoomControl: true }).setView([45.6672, 9.7416], 13);   // Seriate
+const map = L.map('mappa', { zoomControl: true, doubleClickZoom: false }).setView([45.6672, 9.7416], 13);   // Seriate
 let fondo = null;
 function setFondo(k) {
   if (fondo) map.removeLayer(fondo);
@@ -132,7 +132,7 @@ const pallino = latlng => L.circleMarker(latlng, { radius: 7, color: '#fff', wei
 
 function setModo(m) {
   modo = m; $('m-punto').classList.toggle('on', m === 'punto'); $('m-lotto').classList.toggle('on', m === 'lotto');
-  $('aiuto').textContent = m === 'punto' ? 'Clicca sulla mappa per mettere il punto del progetto.' : 'Clicca i vertici del lotto uno dopo l\'altro, poi "Chiudi lotto".';
+  $('aiuto').textContent = m === 'punto' ? 'Clicca sulla mappa per mettere il punto del progetto.' : 'Clicca i vertici del lotto uno dopo l\'altro, poi clicca sul primo vertice o su "Chiudi lotto".';
   map.getContainer().style.cursor = 'crosshair';
 }
 $('m-punto').onclick = () => setModo('punto');
@@ -146,6 +146,10 @@ map.on('click', e => {
   if (modo === 'punto') { if (punto) map.removeLayer(punto); punto = pallino(e.latlng).addTo(map); geocodificaInversa(e.latlng); }
   else {
     if (chiuso) cancellaLotto();
+    const px = map.latLngToContainerPoint(e.latlng);
+    // clic sul primo vertice: chiude il lotto; clic ripetuto sullo stesso punto: ignorato
+    if (vertici.length >= 3 && px.distanceTo(map.latLngToContainerPoint(vertici[0])) < 12) { $('chiudi').click(); return; }
+    if (vertici.length && px.distanceTo(map.latLngToContainerPoint(vertici[vertici.length - 1])) < 6) return;
     vertici.push(e.latlng);
     if (traccia) map.removeLayer(traccia);
     traccia = L.polyline(vertici, { color: AR, weight: 2, dashArray: '4 4' }).addTo(map);
@@ -209,9 +213,15 @@ const GEO = 'https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer
 const zoomPer = t => /PointAddress|Subaddress|StreetAddress|POI|StreetName|StreetInt|house|building|road/i.test(t) ? 17 : /Neighborhood|District|suburb|quarter|hamlet|village/i.test(t) ? 16 : 15;
 async function trova(q, n) {
   try {
-    const r = await fetch(`${GEO}findAddressCandidates?f=json&countryCode=ITA&langCode=IT&maxLocations=${n}&outFields=Addr_type,Match_addr&SingleLine=${encodeURIComponent(q)}`);
+    const r = await fetch(`${GEO}findAddressCandidates?f=json&countryCode=ITA&langCode=IT&maxLocations=${Math.max(n, 8)}&outFields=Addr_type,Match_addr,City,Subregion&SingleLine=${encodeURIComponent(q)}`);
     const js = await r.json();
-    if (js.candidates && js.candidates.length) return js.candidates.map(c => ({ nome: c.address, lat: c.location.y, lng: c.location.x, z: zoomPer(c.attributes.Addr_type || '') }));
+    if (js.candidates && js.candidates.length) {
+      // a parità di punteggio vince il candidato nel comune scritto nella ricerca (es. "Via Pastrengo 1, Seriate")
+      const ql = q.toLowerCase();
+      const nelComune = c => { const city = (c.attributes.City || '').toLowerCase(); return city && ql.includes(city) ? 1 : 0; };
+      const ord = js.candidates.slice().sort((a, b) => nelComune(b) - nelComune(a) || b.score - a.score);
+      return ord.slice(0, n).map(c => ({ nome: c.address, lat: c.location.y, lng: c.location.x, z: zoomPer(c.attributes.Addr_type || '') }));
+    }
   } catch (e) {}
   const r = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=${n}&countrycodes=it&accept-language=it&q=${encodeURIComponent(q)}`);
   return (await r.json()).map(x => ({ nome: x.display_name, lat: +x.lat, lng: +x.lon, z: zoomPer(x.addresstype || x.type || '') }));
