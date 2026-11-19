@@ -501,9 +501,20 @@ $('copia-img').onclick = async () => {
   avviso('Preparo l\'inquadramento…'); $('copia-img').disabled = true;
   try {
     // la promessa va passata subito a ClipboardItem: così la copia resta legata al clic anche se l'immagine richiede qualche secondo
-    await navigator.clipboard.write([new ClipboardItem({ 'image/png': inquadramento() })]);
+    if (!window.ClipboardItem || !navigator.clipboard || !navigator.clipboard.write) throw new Error('copia di immagini non disponibile');
+    const copia = navigator.clipboard.write([new ClipboardItem({ 'image/png': inquadramento() })]);
+    // se la copia resta in sospeso (permesso negato in silenzio da alcune viste), dopo 12 secondi passo alla riserva
+    await Promise.race([copia, new Promise((_, no) => setTimeout(() => no(new Error('copia bloccata')), 12000))]);
     avviso('Inquadramento copiato: incollalo nella chat con Claude (Ctrl+V).');
-  } catch (e) { avviso('Copia dell\'immagine non riuscita (' + (e.message || e) + '): usa "Oppure scarica i due file".'); }
+  } catch (e) {
+    // riserva: se il browser o la vista non permettono di copiare immagini, la scarico subito
+    console.warn('copia immagine:', e);
+    try {
+      const blob = await inquadramento();
+      scarica(blob, raccogli().immagine);
+      avviso('Questo browser non mi lascia copiare l\'immagine (' + (e.name || e.message || e) + '): l\'ho scaricata, trascinala nella chat con Claude.');
+    } catch (e2) { avviso('Inquadramento non riuscito (' + (e2.message || e2) + '): cambia fondo o zoom e riprova.'); }
+  }
   $('copia-img').disabled = false;
 };
 $('esporta').onclick = async () => {
