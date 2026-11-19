@@ -45,6 +45,30 @@ button:disabled{opacity:.4;cursor:default}
 .cerchio-et{font:500 10px var(--mono);letter-spacing:.12em;color:var(--tenue);background:none;border:none;white-space:nowrap}
 @media (max-width:760px){body{grid-template-columns:1fr;grid-template-rows:auto 60vh}aside{order:1}}
 </style>
+<script>
+// La mappa DOMUS si usa SOLO nel browser, all'indirizzo pubblicato: mai dentro un artefatto o una finestra integrata.
+(function () {
+  var UFFICIALE = 'https://domusing-arch.github.io/domus-mappa/';
+  var h = location.protocol, host = location.hostname, dentro = false;
+  try { dentro = window.self !== window.top; } catch (e) { dentro = true; }
+  var locale = h === 'file:' || host === 'localhost' || host === '127.0.0.1';
+  var altrove = !locale && host !== 'domusing-arch.github.io';
+  if (!dentro && !altrove) return;
+  var dest = UFFICIALE + (location.hash || '');
+  // 1. provo a portare via la pagina da sola
+  try { window.top.location.href = dest; } catch (e) {}
+  // 2. se resto qui, la mappa non si usa: solo il pulsante per il browser
+  document.addEventListener('DOMContentLoaded', function () {
+    var d = document.createElement('div');
+    d.setAttribute('style', 'position:fixed;inset:0;z-index:99999;background:#111214;color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;padding:24px;text-align:center;font:16px/1.5 Inter,Arial,sans-serif');
+    d.innerHTML = '<div style="font:300 28px Inter Tight,Arial,sans-serif"><b style="color:#FF8000;font-weight:300">D</b>OMUS · mappa del luogo</div>' +
+      '<div style="max-width:440px">La mappa funziona solo nel browser. Premi il pulsante per aprirla.</div>' +
+      '<a id="vai-browser" href="' + dest.replace(/"/g, '%22') + '" target="_blank" rel="noopener" style="background:#FF8000;color:#fff;padding:14px 22px;text-decoration:none;font:500 13px JetBrains Mono,monospace;letter-spacing:.12em;text-transform:uppercase">Apri nel browser</a>' +
+      '<div style="font-size:12px;color:#9a968c;word-break:break-all;max-width:520px">' + dest.replace(/</g, '&lt;') + '</div>';
+    document.body.appendChild(d);
+  });
+})();
+</script>
 </head>
 <body>
 <aside>
