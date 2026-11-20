@@ -42,7 +42,18 @@ button:disabled{opacity:.4;cursor:default}
 .stato{font:400 11px var(--mono);color:var(--arancio-t);min-height:16px}
 #mappa{height:100%;min-height:0}
 .leaflet-container{background:var(--carta);font-family:var(--testo)}
-.cerchio-et{font:500 10px var(--mono);letter-spacing:.12em;color:var(--tenue);background:none;border:none;white-space:nowrap}
+.cerchio-et{background:none;border:none}
+.cerchio-et span{display:inline-block;font:600 10px var(--mono);letter-spacing:.08em;color:#C25F00;background:#fff;border:1.5px solid #FF8000;padding:2px 6px;white-space:nowrap;transform:translate(-50%,-50%)}
+.tendina{border:1px solid var(--linea);background:#fff}
+.tendina summary{cursor:pointer;padding:8px 10px;font-size:13px;list-style:none}
+.tendina summary::after{content:' ▾';color:var(--tenue)}
+.tendina[open] summary{border-bottom:1px solid var(--linea)}
+.tendina .voci{padding:6px 10px;display:grid;gap:4px}
+.tendina label{display:flex;gap:8px;align-items:center;font-size:13px;cursor:pointer}
+.tendina label small{color:var(--tenue);font-size:11px}
+.tendina .gruppo{font:500 10px var(--mono);letter-spacing:.12em;color:var(--tenue);text-transform:uppercase;margin-top:4px}
+.tendina .tasti{display:flex;gap:6px;margin-top:4px}
+.tendina .tasti button{flex:1;font-size:12px;padding:4px}
 @media (max-width:760px){body{grid-template-columns:1fr;grid-template-rows:auto 60vh}aside{order:1}}
 </style>
 <script>
@@ -97,8 +108,8 @@ button:disabled{opacity:.4;cursor:default}
     <div class="eti">4 · Inquadramento</div>
     <div class="riga">
       <select id="fondo"><option value="chiara">Mappa stradale</option><option value="topo">Mappa topografica</option><option value="sat">Satellite</option></select>
-      <select id="raggi"><option value="0.4,0.8">Cerchi 5 e 10 min a piedi</option><option value="1,3">Cerchi 1 e 3 km</option><option value="5,10">Cerchi 5 e 10 km</option><option value="">Nessun cerchio</option></select>
     </div>
+    <details class="tendina" id="cerchi-menu"><summary id="cerchi-titolo">Cerchi delle distanze</summary><div class="voci" id="cerchi-voci"></div></details>
     <div class="nota">L'inquadramento esportato è quello che vedi, in formato 4:3, in bianco e nero con il lotto in arancio come nella brochure.</div>
   </section>
 
@@ -201,15 +212,64 @@ $('chiudi').onclick = () => {
   if (!punto) { const c = centro(); geocodificaInversa(c); }
   aggiorna();
 };
-$('raggi').onchange = () => aggiorna();
-map.on('zoomend moveend', () => {});
+// cerchi delle distanze: più d'uno, a scelta, con il significato scritto per intero
+const CERCHI = [
+  { id: 'p5', km: 0.4, gruppo: 'A piedi', et: '5 min a piedi', nota: 'circa 400 m' },
+  { id: 'p10', km: 0.8, gruppo: 'A piedi', et: '10 min a piedi', nota: 'circa 800 m' },
+  { id: 'p15', km: 1.2, gruppo: 'A piedi', et: '15 min a piedi', nota: 'circa 1,2 km' },
+  { id: 'b10', km: 2.5, gruppo: 'In bicicletta', et: '10 min in bici', nota: 'circa 2,5 km' },
+  { id: 'k1', km: 1, gruppo: "In linea d'aria", et: "1 km in linea d'aria", nota: '' },
+  { id: 'k3', km: 3, gruppo: "In linea d'aria", et: "3 km in linea d'aria", nota: '' },
+  { id: 'k5', km: 5, gruppo: "In linea d'aria", et: "5 km in linea d'aria", nota: '' },
+  { id: 'k10', km: 10, gruppo: "In linea d'aria", et: "10 km in linea d'aria", nota: '' },
+];
+const CERCHI_TIPO = { residenziale: ['p5', 'p10'], 'opere-pubbliche': ['p5', 'p10'], rigenerazione: ['p5', 'p10'], commerciale: ['p10', 'k3'],
+  direzionale: ['p5', 'p10', 'k1'], logistica: ['k1', 'k3', 'k5'], produttivo: ['k1', 'k3', 'k5'] };
+(function () {
+  const h = new URLSearchParams(location.hash.slice(1));
+  const scelti = new Set((h.get('cerchi') || '').split(',').filter(Boolean).length ? h.get('cerchi').split(',') : (CERCHI_TIPO[h.get('tipo')] || ['p5', 'p10']));
+  let g = '', html = '';
+  CERCHI.forEach(c => {
+    if (c.gruppo !== g) { g = c.gruppo; html += `<div class="gruppo">${g}</div>`; }
+    html += `<label><input type="checkbox" value="${c.id}"${scelti.has(c.id) ? ' checked' : ''}> ${c.et}${c.nota ? ` <small>${c.nota}</small>` : ''}</label>`;
+  });
+  html += '<div class="tasti"><button type="button" id="cerchi-tutti">Tutti</button><button type="button" id="cerchi-nessuno">Nessuno</button></div>';
+  $('cerchi-voci').innerHTML = html;
+  $('cerchi-voci').addEventListener('change', e => { disegnaCerchi(); if (e.target.checked) adattaCerchi(); });
+  $('cerchi-tutti').onclick = () => { $('cerchi-voci').querySelectorAll('input').forEach(i => i.checked = true); disegnaCerchi(); adattaCerchi(); };
+  $('cerchi-nessuno').onclick = () => { $('cerchi-voci').querySelectorAll('input').forEach(i => i.checked = false); disegnaCerchi(); };
+})();
+map.on('zoomend moveend', () => { if (centro()) disegnaCerchi(); });
 
 function centro() {
   if (punto) return punto.getLatLng();
   if (vertici.length) { const b = L.latLngBounds(vertici); return b.getCenter(); }
   return null;
 }
-function raggi() { return $('raggi').value ? $('raggi').value.split(',').map(Number) : []; }
+function cerchiScelti() {
+  const id = new Set([...$('cerchi-voci').querySelectorAll('input:checked')].map(i => i.value));
+  return CERCHI.filter(c => id.has(c.id));
+}
+function raggi() { return cerchiScelti().map(c => c.km); }
+// porta in vista il cerchio più grande scelto, così le etichette si leggono (poi si può rifare lo zoom a mano)
+function adattaCerchi() {
+  const c = centro(), sc = cerchiScelti();
+  if (!c || !sc.length) return;
+  const km = Math.max(...sc.map(x => x.km));
+  map.fitBounds(L.latLng(c).toBounds(km * 2000 * 1.12));
+}
+const etichettaCerchio = c => (c.et + (c.nota ? ' · ' + c.nota.replace('circa ', '') : '')).toUpperCase();
+// posizione dell'etichetta sul cerchio: il primo punto visibile (dall'alto, poi ai lati) che non copre le altre etichette
+function posEt(cx, cy, r, W, H, w, occupati) {
+  const ang = [-90, -60, -120, -30, -150, 0, 180, 30, 150, 60, 120, 90];
+  for (const d of ang) {
+    const a = d * Math.PI / 180, x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r;
+    if (x - w / 2 < 10 || x + w / 2 > W - 10 || y < 30 || y > H - 30) continue;
+    if (occupati.some(o => Math.abs(o[0] - x) < (o[2] + w) / 2 + 8 && Math.abs(o[1] - y) < 40)) continue;
+    occupati.push([x, y, w]); return [x, y];
+  }
+  return null;
+}
 
 // area geodetica del poligono (mq), proiezione locale equirettangolare: errore trascurabile per un lotto
 function areaMq(pts) {
@@ -226,15 +286,25 @@ function dms(v, pos, neg) {
 }
 const fmt = n => String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
 
-function aggiorna() {
+function disegnaCerchi() {
   cerchi.clearLayers();
   const c = centro();
-  if (c) raggi().forEach((km, i) => {
-    L.circle(c, { radius: km * 1000, color: '#6C6860', weight: 1, dashArray: '3 5', fill: false, interactive: false }).addTo(cerchi);
-    const lab = $('raggi').value === '0.4,0.8' ? ['5 MIN', '10 MIN'][i] : (km < 1 ? km * 1000 + ' M' : km + ' KM');
-    const p = L.latLng(c.lat + km / 111.32, c.lng);
-    L.marker(p, { icon: L.divIcon({ className: 'cerchio-et', html: lab, iconSize: [60, 14], iconAnchor: [30, 16] }), interactive: false }).addTo(cerchi);
-  });
+  const sc = cerchiScelti();
+  $('cerchi-titolo').textContent = sc.length ? `Cerchi delle distanze: ${sc.map(x => x.et).join(', ')}` : 'Cerchi delle distanze: nessuno';
+  if (c) {
+    const occ = [], sz = map.getSize(), pc = map.latLngToContainerPoint(c);
+    const mpp = 156543.03392 * Math.cos(c.lat * Math.PI / 180) / 2 ** map.getZoom();
+    sc.forEach(ce => {
+      L.circle(c, { radius: ce.km * 1000, color: '#FF8000', weight: 3, dashArray: '8 6', fill: false, interactive: false }).addTo(cerchi);
+      const lab = etichettaCerchio(ce), pos = posEt(pc.x, pc.y, ce.km * 1000 / mpp, sz.x, sz.y, lab.length * 7 + 16, occ);
+      if (pos) L.marker(map.containerPointToLatLng(pos), { icon: L.divIcon({ className: 'cerchio-et', html: `<span>${lab}</span>`, iconSize: [0, 0] }), interactive: false }).addTo(cerchi);
+    });
+  }
+}
+
+function aggiorna() {
+  disegnaCerchi();
+  const c = centro();
   $('d-coord').textContent = c ? `${dms(c.lat, 'N', 'S')} ${dms(c.lng, 'E', 'W')}` : '—';
   const a = chiuso ? areaMq(vertici) : 0;
   $('d-area').textContent = a ? fmt(a) + ' mq circa' : '—';
@@ -325,17 +395,27 @@ async function inquadramento() {
   g.fillStyle = 'rgba(240,237,231,.28)'; g.fillRect(0, 0, W, H);           // velatura "tavola"
   const P = ll => { const p = map.project(ll, z).subtract(tl); return [p.x, p.y]; };
   const c = centro(), mpp = 156543.03392 * Math.cos(c.lat * Math.PI / 180) / n;
-  // cerchi delle distanze
-  g.setLineDash([10, 14]); g.lineWidth = 2.5; g.strokeStyle = '#6C6860';
+  // cerchi delle distanze: arancio, ben visibili sull'ortofoto, con il significato scritto per intero
   const [cx, cy] = P(c);
-  g.font = '500 26px "JetBrains Mono", Consolas, monospace'; g.textAlign = 'center';
-  raggi().forEach((km, i) => {
-    const r = km * 1000 / mpp; g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.stroke();
-    const lab = $('raggi').value === '0.4,0.8' ? ['5 MIN', '10 MIN'][i] : (km < 1 ? km * 1000 + ' M' : km + ' KM');
-    g.fillStyle = '#F0EDE7'; const w = g.measureText(lab).width + 20; g.fillRect(cx - w / 2, cy - r - 18, w, 34);
-    g.fillStyle = '#6C6860'; g.fillText(lab, cx, cy - r + 8);
+  const sc = cerchiScelti();
+  sc.forEach(ce => {
+    const r = ce.km * 1000 / mpp;
+    g.setLineDash([]); g.lineWidth = 9; g.strokeStyle = 'rgba(255,255,255,.75)'; g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.stroke();
+    g.setLineDash([22, 12]); g.lineWidth = 5; g.strokeStyle = '#FF8000'; g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.stroke();
   });
   g.setLineDash([]);
+  g.font = '600 26px "JetBrains Mono", Consolas, monospace'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  const occ = [];
+  sc.forEach(ce => {
+    const r = ce.km * 1000 / mpp, lab = etichettaCerchio(ce), w = g.measureText(lab).width + 28;
+    const pos = posEt(cx, cy, r, W, H, w, occ);
+    if (!pos) return;
+    const [x, y] = pos;
+    g.fillStyle = '#fff'; g.fillRect(x - w / 2, y - 20, w, 40);
+    g.lineWidth = 3; g.strokeStyle = '#FF8000'; g.strokeRect(x - w / 2, y - 20, w, 40);
+    g.fillStyle = '#C25F00'; g.fillText(lab, x, y + 1);
+  });
+  g.textBaseline = 'alphabetic';
   // lotto
   if (chiuso) {
     g.beginPath(); vertici.forEach((v, i) => { const [x, y] = P(v); i ? g.lineTo(x, y) : g.moveTo(x, y); }); g.closePath();
@@ -368,7 +448,7 @@ function raccogli() {
     indirizzo: luogo.indirizzo, comune: luogo.comune, provincia: luogo.provincia, regione: luogo.regione,
     luogo_brochure: [luogo.indirizzo, luogo.comune && `${luogo.comune}${luogo.provincia ? ` (${luogo.provincia})` : ''}`].filter(Boolean).join(' · '),
     lotto: chiuso ? vertici.map(v => [+v.lat.toFixed(6), +v.lng.toFixed(6)]) : null, area_lotto_mq_circa: chiuso ? Math.round(areaMq(vertici)) : null,
-    raggi_km: raggi(), fondo: $('fondo').value, zoom: map.getZoom(), link_google_maps: `https://www.google.com/maps?q=${c.lat.toFixed(6)},${c.lng.toFixed(6)}`,
+    raggi_km: raggi(), cerchi: cerchiScelti().map(x => ({ km: x.km, significato: x.et + (x.nota ? ` (${x.nota})` : '') })), fondo: $('fondo').value, zoom: map.getZoom(), link_google_maps: `https://www.google.com/maps?q=${c.lat.toFixed(6)},${c.lng.toFixed(6)}`,
     immagine: `DOMUS_inquadramento_${slug()}.png`, creato: new Date().toISOString(),
   };
 }
@@ -381,7 +461,7 @@ function testoPerClaude(d) {
     `Comune: ${d.comune || '—'}${d.provincia ? ` (${d.provincia})` : ''}${d.regione ? ` · ${d.regione}` : ''}`,
     `Area del lotto disegnato: ${d.area_lotto_mq_circa ? 'circa ' + fmt(d.area_lotto_mq_circa) + ' mq (indicativa)' : 'lotto non disegnato'}`,
     d.lotto ? `Vertici del lotto: ${d.lotto.map(p => p.join(',')).join(' ; ')}` : '',
-    `Cerchi distanze: ${d.raggi_km.length ? d.raggi_km.join(' e ') + ' km' : 'nessuno'} · fondo ${d.fondo} · zoom ${d.zoom}`,
+    `Cerchi delle distanze: ${d.cerchi.length ? d.cerchi.map(x => x.significato).join('; ') : 'nessuno'} · fondo ${d.fondo} · zoom ${d.zoom}`,
     `Google Maps: ${d.link_google_maps}`, ...testoStudio(d.studio_intorno), '', '```json', JSON.stringify(d), '```'].filter((x, i, a) => x !== '' || (a[i + 1] || '').startsWith('STUDIO') || (a[i + 1] || '').startsWith('Studio')).join('\n');
 }
 // ---------------------------------------------------------------- studio dell'intorno (OpenStreetMap via Overpass)
